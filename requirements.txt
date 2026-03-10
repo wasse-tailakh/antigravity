@@ -1,0 +1,14 @@
+anthropic
+openai
+google-generativeai
+python-dotenv
+pydantic
+pydantic-settings
+requests
+rich
+tenacity
+selenium
+playwright
+gitpython
+fastapi
+uvicorn
