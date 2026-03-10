@@ -8,3 +8,5 @@ __pycache__/
 test_output*.txt
 math_test.txt
 system.log
+.vscode/
+.claude/
