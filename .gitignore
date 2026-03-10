@@ -1,11 +1,10 @@
 .env
+.cache/
+logs/
+*.log
 __pycache__/
 *.pyc
-venv/
-.venv/
-.vscode/
-
+.pytest_cache/
+test_output*.txt
+math_test.txt
 system.log
-.env
-*.env
-.claude/settings.local.json
