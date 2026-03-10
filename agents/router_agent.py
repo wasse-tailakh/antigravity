@@ -14,13 +14,12 @@ class RouterAgent(BaseAgent):
             name="Orchestrator Router",
             capabilities=["routing", "delegation"]
         )
-        # In a real system, the Router would likely use a fast LLM (like OpenAI mini) 
-        # to analyze the prompt and pick the right agent. 
-        # For this MVP, we initialize the available agents.
-        self.agents = {
-            "claude": ClaudeAgent(),
-            "openai": OpenAIAgent(),
-            "gemini": GeminiAgent()
+        # Lazy-loaded agent registry — agents are only instantiated on first use
+        self._agents = {}
+        self._agent_classes = {
+            "claude": ClaudeAgent,
+            "openai": OpenAIAgent,
+            "gemini": GeminiAgent
         }
         self.rate_limit_policy = RateLimitPolicy()
         
@@ -32,6 +31,22 @@ class RouterAgent(BaseAgent):
             self.logger.warning(f"Could not load router prompt: {e}")
             self.base_prompt = "Respond with 'gemini' for anything not complex code."
 
+    @property
+    def agents(self):
+        """Lazy-loading property — instantiates agents only on first access."""
+        return self._agents
+    
+    def get_agent(self, name: str):
+        """Get or create an agent by name."""
+        if name not in self._agents:
+            cls = self._agent_classes.get(name)
+            if cls:
+                self.logger.info(f"Lazy-loading {name} agent...")
+                self._agents[name] = cls()
+            else:
+                raise ValueError(f"Unknown agent: {name}")
+        return self._agents[name]
+
     def run(self, prompt: str, context: Dict[str, Any] = None, tools_registry: Any = None) -> Any:
         # MVP Logic: Use Gemini to classify the intent and pick an agent (cheap)
         self.logger.info("Routing new task...")
@@ -40,7 +55,7 @@ class RouterAgent(BaseAgent):
         def _compute_routing():
             def _llm_call():
                 self.logger.debug("Asking Gemini to classify intent.")
-                return self.agents["gemini"].run(classification_prompt)
+                return self.get_agent("gemini").run(classification_prompt)
                 
             return BackoffLogic.execute_with_backoff(
                 operation=_llm_call,
@@ -60,12 +75,12 @@ class RouterAgent(BaseAgent):
             self.logger.warning(f"Failed to classify intent using Gemini: {e}. Falling back to gemini.")
             decision = "gemini"
             
-        if decision not in self.agents:
+        if decision not in self._agent_classes:
             self.logger.warning(f"Invalid agent choice '{decision}', falling back to gemini.")
             decision = "gemini"
             
         self.logger.info(f"Delegating task to {decision.upper()} agent...")
-        selected_agent = self.agents[decision]
+        selected_agent = self.get_agent(decision)
         
         try:
             # Pass the tools registry down to the selected agent

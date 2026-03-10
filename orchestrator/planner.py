@@ -28,7 +28,7 @@ class Planner:
         """
         self.logger.info("Developing execution plan...")
         
-        # We explicitly route this to Claude for high-quality planning
+        # We route planning to Gemini Flash (cheap and fast for structured output)
         planning_prompt = f"""
         Break down the following user request into a sequence of concrete, actionable steps.
         
@@ -65,9 +65,8 @@ class Planner:
                 rate_limit_policy=self.rate_limit_policy
             )
             
+            
             # Extract JSON from potential markdown formatting or conversational wrapper
-            import json
-            import re
             
             # Try to find a JSON array block
             json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)

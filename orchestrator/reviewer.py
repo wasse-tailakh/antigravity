@@ -39,11 +39,18 @@ class Reviewer:
 
         # If the LLM just returned a generic text answer without specific action metadata
         if result.output and isinstance(result.output, str):
-            if "error" in result.output.lower() and len(result.output) < 150:
-                 return False, f"The output appears to contain an error message: {result.output}"
-            if len(result.output.strip()) == 0:
-                 return False, "The agent returned an empty markdown string."
-                 
+            output_stripped = result.output.strip()
+            if len(output_stripped) == 0:
+                 return False, "The agent returned an empty string."
+            
+            # Only flag as error if the output is short AND starts with error-like patterns
+            # Avoid false positives from legitimate text containing the word "error"
+            error_prefixes = ["error:", "error -", "traceback", "exception:", "failed:"]
+            if len(output_stripped) < 150:
+                lower_output = output_stripped.lower()
+                if any(lower_output.startswith(p) for p in error_prefixes):
+                    return False, f"The output appears to contain an error: {output_stripped}"
+                  
             return True, "Output appears valid."
 
         # Generic fallback

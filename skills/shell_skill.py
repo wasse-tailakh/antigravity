@@ -6,14 +6,36 @@ from config.logger import get_logger
 logger = get_logger("ShellSkill")
 
 class ShellSkill(BaseTool):
-    # Commands that should be blocked for security
-    BLOCKED_COMMANDS = [
-        'rm -rf /',
-        'dd if=',
-        'mkfs',
-        'format',
-        ':(){ :|:& };:',  # Fork bomb
+    # Hard ceiling on execution time
+    MAX_TIMEOUT = 120
+
+    # Commands/patterns that should be blocked for security
+    BLOCKED_PATTERNS = [
+        # Destructive filesystem operations
+        'rm -rf /', 'rm -rf ~', 'rm -rf *', 'rm -rf .', 'rmdir /s',
+        'del /s /q', 'rd /s /q',
+        # Disk/partition manipulation
+        'dd if=', 'mkfs', 'fdisk', 'format c:', 'format d:',
+        # Fork bombs and resource exhaustion
+        ':(){ :|:& };:', '%0|%0',
+        # System shutdown/reboot
+        'shutdown', 'reboot', 'init 0', 'init 6', 'halt', 'poweroff',
+        # User/permission manipulation
+        'chmod 777', 'chown root', 'useradd', 'userdel', 'passwd',
+        'net user', 'net localgroup',
+        # Network exfiltration
+        'curl', 'wget', 'nc ', 'netcat', 'ncat',
+        # Registry / system config
+        'reg delete', 'reg add', 'regedit',
+        # Crypto/ransomware patterns
+        'cipher /w', 'gpg --encrypt',
+        # Package managers (prevent installing arbitrary packages)
+        'pip install', 'npm install', 'apt install', 'yum install',
+        'choco install', 'winget install',
     ]
+    
+    # Dangerous shell metacharacters that enable chaining/injection
+    BLOCKED_METACHARACTERS = ['&&', '||', ';', '`', '$(',  '|']
 
     def __init__(self):
         self._name = "shell_skill"
@@ -24,7 +46,7 @@ class ShellSkill(BaseTool):
         
     @property
     def description(self) -> str:
-        return "Executes shell commands. Use this sparingly and cautiously."
+        return "Executes shell commands safely within strict security boundaries. Blocks destructive and network commands."
         
     @property
     def input_schema(self) -> Dict[str, Any]:
@@ -41,7 +63,7 @@ class ShellSkill(BaseTool):
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default 30)."
+                    "description": "Timeout in seconds (default 30, max 120)."
                 }
             },
             "required": ["command"]
@@ -49,15 +71,25 @@ class ShellSkill(BaseTool):
 
     def _is_safe_command(self, command: str) -> bool:
         command_lower = command.lower().strip()
-        for blocked in self.BLOCKED_COMMANDS:
+        
+        # Check blocked patterns
+        for blocked in self.BLOCKED_PATTERNS:
             if blocked in command_lower:
+                logger.warning(f"Blocked pattern matched: '{blocked}' in command")
                 return False
+        
+        # Check for shell injection metacharacters
+        for meta in self.BLOCKED_METACHARACTERS:
+            if meta in command:
+                logger.warning(f"Blocked metacharacter '{meta}' detected in command")
+                return False
+                
         return True
 
     def execute(self, **kwargs) -> ToolResult:
         command = kwargs.get("command")
         cwd = kwargs.get("cwd")
-        timeout = kwargs.get("timeout", 30)
+        timeout = min(kwargs.get("timeout", 30), self.MAX_TIMEOUT)
 
         if not command:
             return ToolResult(success=False, output=None, error="Command is required.")

@@ -41,10 +41,12 @@ class FileSkill(BaseTool):
         }
         
     def _is_safe_path(self, filepath: str) -> bool:
-        """Ensures the path is within the project root."""
+        """Ensures the path is within the project root, even after resolving symlinks."""
         try:
-            target_path = Path(filepath).resolve()
-            return self._project_root in target_path.parents or target_path == self._project_root
+            # Use os.path.realpath to resolve symlinks before checking
+            target_real = Path(os.path.realpath(filepath)).resolve()
+            root_real = Path(os.path.realpath(str(self._project_root))).resolve()
+            return root_real in target_real.parents or target_real == root_real
         except Exception:
             return False
 

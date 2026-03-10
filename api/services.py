@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from api.schemas import RunWorkflowRequest, RunStatusResponse, StepResultSchema
 
 # In-memory store for background run statuses
@@ -20,7 +20,7 @@ def execute_workflow_background(task_id: str, req: RunWorkflowRequest):
         task_id=task_id,
         workflow_name=req.workflow_name,
         status="running",
-        started_at=datetime.utcnow()
+        started_at=datetime.now(timezone.utc)
     )
     
     results = None
@@ -49,7 +49,7 @@ def execute_workflow_background(task_id: str, req: RunWorkflowRequest):
         analyzed = analyze_results(workflow, results)
         analyzed.task_id = task_id
         analyzed.started_at = store[task_id].started_at
-        analyzed.finished_at = datetime.utcnow()
+        analyzed.finished_at = datetime.now(timezone.utc)
         store[task_id] = analyzed
         
     except Exception as e:
@@ -58,7 +58,7 @@ def execute_workflow_background(task_id: str, req: RunWorkflowRequest):
             workflow_name=req.workflow_name,
             status="failed",
             started_at=store[task_id].started_at,
-            finished_at=datetime.utcnow(),
+            finished_at=datetime.now(timezone.utc),
             final_output=str(e)
         )
 
