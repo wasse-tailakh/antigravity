@@ -66,22 +66,37 @@ class FileSkill(BaseTool):
             
         if not self._is_safe_path(str(target_path)):
             logger.warning(f"Security violation blocked: Attempted access outside project root ({self._project_root}) -> {target_path}")
-            return ToolResult(success=False, output=None, error=f"Security violation: Access denied to paths outside project root.")
+            return ToolResult(success=False, output=None, error="Security violation: Access denied to paths outside project root.")
 
         if action == "read":
+            if not target_path.exists():
+                return ToolResult(success=False, output=None, error=f"File not found: {filepath}")
+            if target_path.is_dir():
+                return ToolResult(success=False, output=None, error=f"Cannot read a directory: {filepath}")
+                
             try:
                 with open(target_path, 'r', encoding='utf-8') as f:
                     return ToolResult(success=True, output=f.read())
+            except PermissionError:
+                return ToolResult(success=False, output=None, error=f"Permission denied reading file: {filepath}")
+            except UnicodeDecodeError:
+                return ToolResult(success=False, output=None, error=f"Cannot decode file {filepath} as text. It might be a binary file.")
             except Exception as e:
                 return ToolResult(success=False, output=None, error=f"Error reading file {filepath}: {str(e)}")
                 
         elif action == "write":
             if content is None:
                  return ToolResult(success=False, output=None, error="Content is required for write action.")
+                 
+            if target_path.is_dir():
+                return ToolResult(success=False, output=None, error=f"Cannot write to a directory: {filepath}")
+                
             try:
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 with open(target_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 return ToolResult(success=True, output=f"Successfully wrote to {filepath}")
+            except PermissionError:
+                return ToolResult(success=False, output=None, error=f"Permission denied writing to file: {filepath}")
             except Exception as e:
                 return ToolResult(success=False, output=None, error=f"Error writing to file {filepath}: {str(e)}")
