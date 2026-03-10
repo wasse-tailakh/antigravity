@@ -4,6 +4,9 @@ from .base_agent import BaseAgent
 from .claude_agent import ClaudeAgent
 from .openai_agent import OpenAIAgent
 from .gemini_agent import GeminiAgent
+from memory.response_cache import response_cache
+from orchestrator.backoff import BackoffLogic
+from policies.rate_limit_policy import RateLimitPolicy
 
 class RouterAgent(BaseAgent):
     def __init__(self):
@@ -19,6 +22,7 @@ class RouterAgent(BaseAgent):
             "openai": OpenAIAgent(),
             "gemini": GeminiAgent()
         }
+        self.rate_limit_policy = RateLimitPolicy()
         
         # Load prompt safely
         prompt_path = Path(__file__).parent.parent / "prompts" / "router.txt"
@@ -33,9 +37,25 @@ class RouterAgent(BaseAgent):
         self.logger.info("Routing new task...")
         classification_prompt = self.base_prompt.format(prompt=prompt)
         
+        def _compute_routing():
+            def _llm_call():
+                self.logger.debug("Asking Gemini to classify intent.")
+                return self.agents["gemini"].run(classification_prompt)
+                
+            return BackoffLogic.execute_with_backoff(
+                operation=_llm_call,
+                max_attempts=3,
+                base_delay=2.0,
+                max_delay=60.0,
+                rate_limit_policy=self.rate_limit_policy
+            ).strip().lower()
+
         try:
-            self.logger.debug("Asking Gemini to classify intent.")
-            decision = self.agents["gemini"].run(classification_prompt).strip().lower()
+            decision = response_cache.get_or_compute(
+                namespace="router",
+                payload={"prompt": prompt},
+                compute_fn=_compute_routing
+            )
         except Exception as e:
             self.logger.warning(f"Failed to classify intent using Gemini: {e}. Falling back to gemini.")
             decision = "gemini"

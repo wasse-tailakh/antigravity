@@ -1,16 +1,18 @@
 from agents.router_agent import RouterAgent
 from config.logger import get_logger
-from memory.task_cache import TaskCache
+from memory.response_cache import response_cache
+from orchestrator.backoff import BackoffLogic
+from policies.rate_limit_policy import RateLimitPolicy
 from pathlib import Path
 from typing import List, Dict, Any
 import json
 import re
 
 class Planner:
-    def __init__(self, task_cache: TaskCache = None):
+    def __init__(self):
         self.router = RouterAgent()
         self.logger = get_logger("Planner")
-        self.cache = task_cache or TaskCache()
+        self.rate_limit_policy = RateLimitPolicy()
         
         # Load prompt safely
         prompt_path = Path(__file__).parent.parent / "prompts" / "planner.txt"
@@ -47,15 +49,20 @@ class Planner:
         Respond ONLY with the raw JSON array. Ex: [{{ "id": 1, "description": "...", "agent_type": "gemini" }}]
         """
         
-        try:
-            # Bypass router classification, force gemini for planning
-            self.logger.debug("Calling Gemini for planning...")
-            response_text = self.router.agents["gemini"].run(planning_prompt)
-        except Exception as e:
-            self.logger.error(f"Failed to get plan from Gemini: {e}", exc_info=True)
-            return [{"id": 1, "description": task_description, "agent_type": "gemini"}]
         
-        try:
+        def _compute_plan():
+            def _llm_call():
+                self.logger.debug("Calling Gemini for planning...")
+                return self.router.agents["gemini"].run(planning_prompt)
+                
+            response_text = BackoffLogic.execute_with_backoff(
+                operation=_llm_call,
+                max_attempts=3,
+                base_delay=2.0,
+                max_delay=60.0,
+                rate_limit_policy=self.rate_limit_policy
+            )
+            
             # Extract JSON from potential markdown formatting or conversational wrapper
             import json
             import re
@@ -74,10 +81,15 @@ class Planner:
                
             plan = json.loads(json_str)
             self.logger.info(f"Successfully created a plan with {len(plan)} steps.")
-            # Save to cache
-            self.cache.set("PLAN:" + task_description, plan)
             return plan
+
+        try:
+            return response_cache.get_or_compute(
+                namespace="planner",
+                payload={"task": task_description},
+                compute_fn=_compute_plan
+            )
         except Exception as e:
-            self.logger.error(f"Error parsing plan: {str(e)}\nRaw response: {response_text}", exc_info=True)
+            self.logger.error(f"Error generating plan: {str(e)}", exc_info=True)
             # Fallback to a single-step plan
             return [{"id": 1, "description": task_description, "agent_type": "gemini"}]

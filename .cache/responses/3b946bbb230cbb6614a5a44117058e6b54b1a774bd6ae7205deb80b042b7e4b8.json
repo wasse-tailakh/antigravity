@@ -1,0 +1,8 @@
+{
+  "created_at": 1773128680.395139,
+  "namespace": "router",
+  "payload": {
+    "prompt": "Execute `ls -F` to list all files and directories in the current working directory."
+  },
+  "value": "gemini"
+}
