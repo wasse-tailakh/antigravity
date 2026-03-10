@@ -1,30 +1,46 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 import sqlite3
 from typing import List
-from api.schemas import RunJournalSchema
+from api.schemas import APIResponse, APIError, RunStatusResponse, RunJournalSchema
+from api.services import get_run_store
 
 router = APIRouter()
 
-@router.get("/", response_model=List[dict])
-def list_runs(limit: int = 5):
+@router.get("/", summary="List recent runs", description="Returns recent workflow runs from memory and the in-memory run store.")
+def list_runs(limit: int = 10):
+    results = []
+    
+    # First, include in-memory background runs
+    run_store = get_run_store()
+    for task_id, run_status in run_store.items():
+        results.append({"task_id": task_id, "workflow": run_status.workflow_name, "status": run_status.status})
+    
+    # Then, include historical runs from SQLite
     try:
         from memory.memory_store import SQLiteMemoryStore
         store = SQLiteMemoryStore()
-        
         with sqlite3.connect(store.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT task_id, timestamp FROM task_memory ORDER BY timestamp DESC LIMIT ?", 
                 (limit,)
             )
-            runs = cursor.fetchall()
-            return [{"task_id": r[0], "timestamp": r[1]} for r in runs]
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            rows = cursor.fetchall()
+            for r in rows:
+                results.append({"task_id": r[0], "timestamp": r[1], "status": "completed"})
+    except Exception:
+        pass
+    
+    return APIResponse(success=True, message=f"Found {len(results)} run(s)", data=results)
 
-@router.get("/{task_id}", response_model=List[RunJournalSchema])
+@router.get("/{task_id}", summary="Get run details", description="Returns the status and steps of a specific workflow run.")
 def get_run_details(task_id: str):
+    # Check in-memory store first (for async runs)
+    run_store = get_run_store()
+    if task_id in run_store:
+        return APIResponse(success=True, message="Run found", data=run_store[task_id].model_dump())
+    
+    # Otherwise check SQLite journal
     try:
         from memory.memory_store import SQLiteMemoryStore
         store = SQLiteMemoryStore()
@@ -41,11 +57,18 @@ def get_run_details(task_id: str):
             
             rows = cursor.fetchall()
             if not rows:
-                raise HTTPException(status_code=404, detail="Run not found in execution journal")
-                
-            return [RunJournalSchema(**dict(r)) for r in rows]
+                return APIResponse(
+                    success=False, 
+                    message="Run not found",
+                    error=APIError(code="not_found", details=f"No run with task_id '{task_id}'", retryable=False)
+                )
             
-    except HTTPException:
-        raise
+            journal = [dict(r) for r in rows]
+            return APIResponse(success=True, message="Run journal found", data=journal)
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return APIResponse(
+            success=False,
+            message="Failed to retrieve run",
+            error=APIError(code="internal_error", details=str(e), retryable=False)
+        )

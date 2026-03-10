@@ -1,64 +1,60 @@
-from fastapi import APIRouter, HTTPException
-from api.schemas import RunWorkflowRequest, RunWorkflowResponse
-from api.services import analyze_workflow_results
-from workflows.project_update import run_project_update_workflow
-from workflows.research_summary import run_research_workflow
-from workflows.debugging import run_debugging_workflow
-from workflows.devops import run_devops_workflow
-from workflows.continuation import run_continuation_workflow
+import time
+import uuid
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from api.schemas import RunWorkflowRequest, APIResponse, APIError, RunStatusResponse
+from api.services import execute_workflow_background, get_run_store
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("/", summary="List workflows", description="Returns all available workflow names.")
 def list_workflows():
-    return {
-        "workflows": [
-            "project-update",
-            "research",
-            "debug",
-            "devops",
-            "continuation"
-        ]
-    }
+    workflows = [
+        {"name": "project-update", "description": "Analyzes a target file and applies a requested refactor.", "required_args": ["target", "goal"]},
+        {"name": "research", "description": "Scans a target directory, summarizes content based on a goal/topic.", "required_args": ["goal"]},
+        {"name": "debug", "description": "Reads an error traceback and patches the target file.", "required_args": ["target", "error"]},
+        {"name": "devops", "description": "Safely executes system shell commands to achieve a goal.", "required_args": ["goal"]},
+        {"name": "continuation", "description": "Chains tasks from SQLite memory context.", "required_args": ["task_id", "goal"]},
+    ]
+    return APIResponse(success=True, message="Available workflows", data=workflows)
 
-@router.post("/run", response_model=RunWorkflowResponse)
-def execute_workflow(req: RunWorkflowRequest):
+@router.post("/run", summary="Run a workflow", description="Starts a workflow execution asynchronously and returns a task_id for polling.")
+def execute_workflow(req: RunWorkflowRequest, background_tasks: BackgroundTasks):
     workflow = req.workflow_name
-    results = None
+    valid_workflows = ["project-update", "research", "debug", "devops", "continuation"]
     
-    try:
-        if workflow == "project-update":
-            if not req.target or not req.goal:
-                raise HTTPException(status_code=400, detail="Workflow 'project-update' requires 'target' and 'goal'")
-            results = run_project_update_workflow(req.target, req.goal)
-            
-        elif workflow == "research":
-            if not req.goal:
-                raise HTTPException(status_code=400, detail="Workflow 'research' requires 'goal' (topic)")
-            target_dir = req.target or "."
-            results = run_research_workflow(req.goal, target_dir)
-            
-        elif workflow == "debug":
-            if not req.target or not req.error:
-                raise HTTPException(status_code=400, detail="Workflow 'debug' requires 'target' and 'error' (traceback)")
-            results = run_debugging_workflow(req.error, req.target)
-            
-        elif workflow == "devops":
-            if not req.goal:
-                raise HTTPException(status_code=400, detail="Workflow 'devops' requires 'goal'")
-            results = run_devops_workflow(req.goal)
-            
-        elif workflow == "continuation":
-            if not req.task_id or not req.goal:
-                raise HTTPException(status_code=400, detail="Workflow 'continuation' requires 'task_id' and 'goal'")
-            results = run_continuation_workflow(req.task_id, req.goal)
-            
-        else:
-            raise HTTPException(status_code=404, detail=f"Workflow '{workflow}' not found")
-            
-        return analyze_workflow_results(workflow, results)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if workflow not in valid_workflows:
+        return APIResponse(
+            success=False,
+            message=f"Workflow '{workflow}' not found",
+            error=APIError(code="not_found", details=f"Available workflows: {', '.join(valid_workflows)}", retryable=False)
+        )
+    
+    # Validate required arguments
+    if workflow == "project-update" and (not req.target or not req.goal):
+        return APIResponse(success=False, message="Missing arguments", error=APIError(code="validation_error", details="'project-update' requires 'target' and 'goal'", retryable=False))
+    elif workflow == "research" and not req.goal:
+        return APIResponse(success=False, message="Missing arguments", error=APIError(code="validation_error", details="'research' requires 'goal'", retryable=False))
+    elif workflow == "debug" and (not req.target or not req.error):
+        return APIResponse(success=False, message="Missing arguments", error=APIError(code="validation_error", details="'debug' requires 'target' and 'error'", retryable=False))
+    elif workflow == "devops" and not req.goal:
+        return APIResponse(success=False, message="Missing arguments", error=APIError(code="validation_error", details="'devops' requires 'goal'", retryable=False))
+    elif workflow == "continuation" and (not req.task_id or not req.goal):
+        return APIResponse(success=False, message="Missing arguments", error=APIError(code="validation_error", details="'continuation' requires 'task_id' and 'goal'", retryable=False))
+    
+    # Generate a unique task_id and register it as pending
+    task_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    run_store = get_run_store()
+    run_store[task_id] = RunStatusResponse(
+        task_id=task_id,
+        workflow_name=workflow,
+        status="pending"
+    )
+    
+    # Launch in background
+    background_tasks.add_task(execute_workflow_background, task_id, req)
+    
+    return APIResponse(
+        success=True,
+        message=f"Workflow '{workflow}' started. Poll GET /runs/{task_id} for status.",
+        data={"task_id": task_id, "status": "pending"}
+    )
