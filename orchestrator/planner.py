@@ -22,7 +22,7 @@ class Planner:
             self.logger.warning(f"Could not load planner prompt: {e}")
             self.base_prompt = "Format output as JSON list of tasks."
         
-    def create_plan(self, task_description: str) -> List[Dict[str, Any]]:
+    def create_plan(self, task_description: str, memory_context: str = "") -> List[Dict[str, Any]]:
         """
         Takes a complex user request and breaks it down into actionable steps.
         """
@@ -33,6 +33,9 @@ class Planner:
         Break down the following user request into a sequence of concrete, actionable steps.
         
         Request: "{task_description}"
+        
+        RECENT TASK MEMORY (Context from previous operations):
+        {memory_context}
         
         Available capabilities:
         - file operations (read/write)
@@ -48,7 +51,6 @@ class Planner:
         
         Respond ONLY with the raw JSON array. Ex: [{{ "id": 1, "description": "...", "agent_type": "gemini" }}]
         """
-        
         
         def _compute_plan():
             def _llm_call():
@@ -86,10 +88,11 @@ class Planner:
         try:
             return response_cache.get_or_compute(
                 namespace="planner",
-                payload={"task": task_description},
+                payload={"task": task_description, "memory": memory_context},
                 compute_fn=_compute_plan
             )
         except Exception as e:
             self.logger.error(f"Error generating plan: {str(e)}", exc_info=True)
             # Fallback to a single-step plan
             return [{"id": 1, "description": task_description, "agent_type": "gemini"}]
+

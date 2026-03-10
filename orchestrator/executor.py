@@ -17,6 +17,13 @@ from orchestrator.backoff import BackoffLogic
 from policies.cost_guard import CostGuard, TaskCostState
 from policies.rate_limit_policy import RateLimitPolicy
 
+from memory.memory_store import SQLiteMemoryStore
+from memory.memory_policy import MemoryPolicy
+from memory.task_memory import TaskMemory
+from memory.short_term_memory import ShortTermMemory
+from memory.execution_journal import ExecutionJournal
+from memory.summarizer import Summarizer
+
 class Executor:
     def __init__(self):
         self.logger = get_logger("Executor")
@@ -27,6 +34,12 @@ class Executor:
         self.rate_limit_policy = RateLimitPolicy()
         self.reviewer = Reviewer()
         
+        # Initialize Memory Subsystem
+        self.memory_store = SQLiteMemoryStore()
+        self.memory_policy = MemoryPolicy()
+        self.task_memory = TaskMemory(store=self.memory_store, policy=self.memory_policy)
+        self.summarizer = Summarizer()
+        
         # Initialize Tool Registry
         self.tool_registry = ToolRegistry()
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -36,14 +49,18 @@ class Executor:
         self.tool_registry.register(ShellSkill())
         self.tool_registry.register(GitSkill())
         
-        self.logger.info("Executor initialized with ToolRegistry.")
+        self.logger.info("Executor initialized with ToolRegistry and Memory Subsystem.")
         
     def execute_task(self, user_request: str):
         self.logger.info(f"New Task Received: {user_request}")
         
+        # Pull recent memories
+        recent_context = self.task_memory.get_recent_summaries_context()
+        self.logger.debug(f"Injecting past memory context:\n{recent_context}")
+        
         # 1. Planning Phase
         try:
-            plan = self.planner.create_plan(user_request)
+            plan = self.planner.create_plan(task_description=user_request, memory_context=recent_context)
         except Exception as e:
             self.logger.critical(f"Planner failed critically: {e}", exc_info=True)
             return []
@@ -56,6 +73,10 @@ class Executor:
         task_id = f"task_{int(time.time())}"
         state = ExecutionState(task_id=task_id, user_prompt=user_request, steps=plan)
         budget = TaskCostState(task_id=task_id)
+        
+        # Initialize per-task memory trackers
+        short_term_memory = ShortTermMemory(policy=self.memory_policy)
+        execution_journal = ExecutionJournal(task_id=task_id, store=self.memory_store, policy=self.memory_policy)
         
         while not state.is_complete():
             step = state.current_step()
@@ -83,11 +104,12 @@ class Executor:
                     
                 budget.record_llm_call(provider=preferred_agent)
                 
-                # Optimize context: only send minimal previous step result, not the whole history
-                minimal_context = {"step": desc}
-                last_res = state.last_result()
-                if last_res:
-                    minimal_context["last_step_output"] = last_res.output
+                # Optimize context using ShortTermMemory
+                minimal_context = {
+                    "step": desc,
+                    "recent_task_memories": recent_context,
+                    "rolling_step_history": short_term_memory.get_context_string()
+                }
                     
                 def _llm_call():
                      if preferred_agent in self.router.agents:
@@ -146,11 +168,15 @@ class Executor:
                 final_result = temp_result
                 break
 
-            # Fallback if final_result is somehow still None (e.g. max attempts reached without setting it correctly in loop)
+            # Fallback if final_result is somehow still None
             if not final_result:
                  final_result = StepResult(step_id=str(step_id), status="failed", error="Unknown execution failure without distinct result.", attempts=attempts)
 
             state.add_result(final_result)
+            
+            # Post-step memory updates
+            short_term_memory.add_step_context(desc, final_result.output or final_result.error, final_result.status == "success")
+            execution_journal.record_step(step, final_result)
             
             # Fast fail if a step completely failed to prevent cascading errors
             if final_result.status == "failed":
@@ -159,8 +185,15 @@ class Executor:
                 
             state.advance()
                 
-        self.logger.info("Execution Complete.")
-        # Return dictionaries to match earlier behavior for callers
+        self.logger.info("Execution Complete. Summarizing for Task Memory...")
+        try:
+            journal_text = execution_journal.get_full_journal_text()
+            task_summary = self.summarizer.summarize_journal(user_request, journal_text)
+            self.task_memory.save_task_summary(task_id, user_request, task_summary)
+            self.logger.info("Task Memory saved successfully.")
+        except Exception as e:
+            self.logger.error(f"Failed to generate or save task memory: {e}")
+            
         return [r.__dict__ for r in state.results]
 
 # Example usage if run directly
