@@ -10,7 +10,7 @@ class ClaudeAgent(BaseAgent):
             name="Claude Planner",
             capabilities=["planning", "architecture", "code_review"]
         )
-        self.model = "claude-3-5-sonnet-20240620"
+        self.model = "claude-3-5-sonnet-20241022"
         try:
             self.client = Anthropic(api_key=settings.anthropic_api_key)
         except Exception as e:

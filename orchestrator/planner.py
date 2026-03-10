@@ -1,13 +1,24 @@
 from agents.router_agent import RouterAgent
 from config.logger import get_logger
+from memory.task_cache import TaskCache
+from pathlib import Path
 from typing import List, Dict, Any
 import json
 import re
 
 class Planner:
-    def __init__(self):
+    def __init__(self, task_cache: TaskCache = None):
         self.router = RouterAgent()
         self.logger = get_logger("Planner")
+        self.cache = task_cache or TaskCache()
+        
+        # Load prompt safely
+        prompt_path = Path(__file__).parent.parent / "prompts" / "planner.txt"
+        try:
+            self.base_prompt = prompt_path.read_text(encoding='utf-8')
+        except Exception as e:
+            self.logger.warning(f"Could not load planner prompt: {e}")
+            self.base_prompt = "Format output as JSON list of tasks."
         
     def create_plan(self, task_description: str) -> List[Dict[str, Any]]:
         """
@@ -37,12 +48,12 @@ class Planner:
         """
         
         try:
-            # Bypass router classification, force claude for planning
-            self.logger.debug("Calling Claude for planning...")
-            response_text = self.router.agents["claude"].run(planning_prompt)
+            # Bypass router classification, force gemini for planning
+            self.logger.debug("Calling Gemini for planning...")
+            response_text = self.router.agents["gemini"].run(planning_prompt)
         except Exception as e:
-            self.logger.error(f"Failed to get plan from Claude: {e}", exc_info=True)
-            return [{"id": 1, "description": task_description, "agent_type": "claude"}]
+            self.logger.error(f"Failed to get plan from Gemini: {e}", exc_info=True)
+            return [{"id": 1, "description": task_description, "agent_type": "gemini"}]
         
         try:
             # Extract JSON from potential markdown formatting or conversational wrapper
@@ -63,8 +74,10 @@ class Planner:
                
             plan = json.loads(json_str)
             self.logger.info(f"Successfully created a plan with {len(plan)} steps.")
+            # Save to cache
+            self.cache.set("PLAN:" + task_description, plan)
             return plan
         except Exception as e:
             self.logger.error(f"Error parsing plan: {str(e)}\nRaw response: {response_text}", exc_info=True)
             # Fallback to a single-step plan
-            return [{"id": 1, "description": task_description, "agent_type": "claude"}]
+            return [{"id": 1, "description": task_description, "agent_type": "gemini"}]

@@ -1,0 +1,13 @@
+Analyze this request: "{prompt}"
+Which agent is best suited for it?
+
+Rules:
+Default to 'gemini' for almost EVERYTHING.
+Only default to 'claude' if the task explicitly involves HIGHLY COMPLEX code generation or architecture design.
+
+Options:
+- claude: Complex code generation, deep refactoring, advanced architecture.
+- openai: Simple tasks, fast text translation
+- gemini: GENERAL reasoning, shell execution, checking files, simple code, testing
+
+Respond with ONLY the name of the agent (claude, openai, or gemini).

@@ -1,4 +1,5 @@
 from typing import Any, Dict
+from pathlib import Path
 from .base_agent import BaseAgent
 from .claude_agent import ClaudeAgent
 from .openai_agent import OpenAIAgent
@@ -18,31 +19,30 @@ class RouterAgent(BaseAgent):
             "openai": OpenAIAgent(),
             "gemini": GeminiAgent()
         }
+        
+        # Load prompt safely
+        prompt_path = Path(__file__).parent.parent / "prompts" / "router.txt"
+        try:
+            self.base_prompt = prompt_path.read_text(encoding='utf-8')
+        except Exception as e:
+            self.logger.warning(f"Could not load router prompt: {e}")
+            self.base_prompt = "Respond with 'gemini' for anything not complex code."
 
     def run(self, prompt: str, context: Dict[str, Any] = None, tools_registry: Any = None) -> Any:
-        # MVP Logic: Use Claude to classify the intent and pick an agent
+        # MVP Logic: Use Gemini to classify the intent and pick an agent (cheap)
         self.logger.info("Routing new task...")
-        classification_prompt = f"""
-        Analyze this request: "{prompt}"
-        Which agent is best suited for it?
-        Options:
-        - claude: Complex planning, architecture, writing code
-        - openai: Simple tasks, fast text transformation, summarization
-        - gemini: Tasks involving analyzing files, web content, or vision
-        
-        Respond with ONLY the name of the agent (claude, openai, or gemini).
-        """
+        classification_prompt = self.base_prompt.format(prompt=prompt)
         
         try:
-            self.logger.debug("Asking Claude to classify intent.")
-            decision = self.agents["claude"].run(classification_prompt).strip().lower()
+            self.logger.debug("Asking Gemini to classify intent.")
+            decision = self.agents["gemini"].run(classification_prompt).strip().lower()
         except Exception as e:
-            self.logger.warning(f"Failed to classify intent using Claude: {e}. Falling back to claude.")
-            decision = "claude"
+            self.logger.warning(f"Failed to classify intent using Gemini: {e}. Falling back to gemini.")
+            decision = "gemini"
             
         if decision not in self.agents:
-            self.logger.warning(f"Invalid agent choice '{decision}', falling back to claude.")
-            decision = "claude"
+            self.logger.warning(f"Invalid agent choice '{decision}', falling back to gemini.")
+            decision = "gemini"
             
         self.logger.info(f"Delegating task to {decision.upper()} agent...")
         selected_agent = self.agents[decision]

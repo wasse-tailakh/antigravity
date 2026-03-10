@@ -1,0 +1,17 @@
+Break down the following user request into a sequence of concrete, actionable steps.
+
+Request: "{task_description}"
+
+Available capabilities:
+- file operations (read/write)
+- shell execution (running commands)
+- git operations (clone, commit, push)
+- web research
+- code writing/modification
+
+Format the output as a JSON block with a list of tasks. Each task should have:
+- id: a step number
+- description: clear description of what needs to be done
+- agent_type: which agent should handle it (claude, openai, or gemini)
+
+Respond ONLY with the raw JSON array. Ex: [{{"id": 1, "description": "...", "agent_type": "gemini"}}]
