@@ -33,7 +33,7 @@ class Planner:
         - description: clear description of what needs to be done
         - agent_type: which agent should handle it (claude, openai, or gemini)
         
-        Respond ONLY with the raw JSON array. Ex: [{{ "id": 1, "description": "...", "agent_type": "claude" }}]
+        Respond ONLY with the raw JSON array. Ex: [{{ "id": 1, "description": "...", "agent_type": "gemini" }}]
         """
         
         try:
@@ -45,13 +45,21 @@ class Planner:
             return [{"id": 1, "description": task_description, "agent_type": "claude"}]
         
         try:
-            # Extract JSON from potential markdown formatting
-            json_match = re.search(r'```json\n(.*?)\n```', response_text, re.DOTALL)
+            # Extract JSON from potential markdown formatting or conversational wrapper
+            import json
+            import re
+            
+            # Try to find a JSON array block
+            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)
             if json_match:
                json_str = json_match.group(1)
             else:
-               # Try to parse the raw response just in case
-               json_str = response_text
+               # Try to find just an array if no codeblocks
+               array_match = re.search(r'(\[.*?\])', response_text, re.DOTALL)
+               if array_match:
+                   json_str = array_match.group(1)
+               else:
+                   json_str = response_text
                
             plan = json.loads(json_str)
             self.logger.info(f"Successfully created a plan with {len(plan)} steps.")

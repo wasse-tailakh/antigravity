@@ -7,3 +7,5 @@ venv/
 
 system.log
 .env
+*.env
+.claude/settings.local.json

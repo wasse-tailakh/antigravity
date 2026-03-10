@@ -19,8 +19,8 @@ class RouterAgent(BaseAgent):
             "gemini": GeminiAgent()
         }
 
-    def run(self, prompt: str, context: Dict[str, Any] = None) -> Any:
-        # MVP Logic: Use OpenAI to classify the intent and pick an agent
+    def run(self, prompt: str, context: Dict[str, Any] = None, tools_registry: Any = None) -> Any:
+        # MVP Logic: Use Claude to classify the intent and pick an agent
         self.logger.info("Routing new task...")
         classification_prompt = f"""
         Analyze this request: "{prompt}"
@@ -34,10 +34,10 @@ class RouterAgent(BaseAgent):
         """
         
         try:
-            self.logger.debug("Asking OpenAI to classify intent.")
-            decision = self.agents["openai"].run(classification_prompt).strip().lower()
+            self.logger.debug("Asking Claude to classify intent.")
+            decision = self.agents["claude"].run(classification_prompt).strip().lower()
         except Exception as e:
-            self.logger.warning(f"Failed to classify intent using OpenAI: {e}. Falling back to claude.")
+            self.logger.warning(f"Failed to classify intent using Claude: {e}. Falling back to claude.")
             decision = "claude"
             
         if decision not in self.agents:
@@ -48,7 +48,8 @@ class RouterAgent(BaseAgent):
         selected_agent = self.agents[decision]
         
         try:
-            return selected_agent.run(prompt, context)
+            # Pass the tools registry down to the selected agent
+            return selected_agent.run(prompt, context=context, tools_registry=tools_registry)
         except Exception as e:
             self.logger.error(f"Selected agent {decision.upper()} failed to run: {e}", exc_info=True)
             return f"Error in Router executing agent {decision.upper()}: {e}"
